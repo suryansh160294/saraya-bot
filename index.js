@@ -170,7 +170,7 @@ async function processResponse(claudeReply, userId, phone, agentName) {
 
 // ── MAIN WEBHOOK ──────────────────────────────────────────────────
 app.post('/webhook', async (req, res) => {
-  res.sendStatus(200);
+  res.status(200).send('');
 
   const incomingMsg = req.body.Body?.trim() || '';
   const from = req.body.From?.replace('whatsapp:', '') || '';
