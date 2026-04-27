@@ -80,6 +80,36 @@ function isPasswordRelated(msg) {
     lower.includes('login') || lower.includes('credential') || lower.includes('secret');
 }
 
+async function extractPasswordInfo(msg) {
+  const response = await anthropic.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 100,
+    system: `User ne password save karne ko kaha hai. Message se sirf service/website name aur actual password value extract karo.
+ONLY reply in this exact format (no extra text):
+SERVICE:[service name]
+PASSWORD:[actual password value]
+
+Examples:
+"gmail ka password abc123 save karo" → SERVICE:Gmail\nPASSWORD:abc123
+"rgegrththhhfedfe ye email password h save karo" → SERVICE:Email\nPASSWORD:rgegrththhhfedfe
+"netflix zxc987 add karo" → SERVICE:Netflix\nPASSWORD:zxc987`,
+    messages: [{ role: 'user', content: msg }]
+  });
+
+  const text = response.content[0].text;
+  const serviceMatch = text.match(/SERVICE:(.+)/);
+  const passwordMatch = text.match(/PASSWORD:(.+)/);
+
+  if (serviceMatch && passwordMatch) {
+    const service = serviceMatch[1].trim();
+    const password = passwordMatch[1].trim();
+    if (service && password && service !== 'Unknown' && password !== 'Unknown') {
+      return `${service} ka password: ${password}`;
+    }
+  }
+  return null;
+}
+
 async function generateExport(userId, agentName, showPasswords) {
   const { data: allMemories } = await supabase.from('memories').select('*').eq('user_id', userId).order('category', { ascending: true });
   const { data: reminders } = await supabase.from('reminders').select('*').eq('user_id', userId).eq('is_sent', false);
@@ -290,8 +320,10 @@ app.post('/webhook', async (req, res) => {
     // ── PASSWORD SAVE ─────────────────────────────────────────────
     if (isPasswordRelated(incomingMsg) && (lower.includes('save') || lower.includes('add') || lower.includes('store'))) {
       if (!user.pin) { await sendMessage(from, `🔒 Pehle PIN set karo:\n*"PIN set karo 1234"*`); return; }
-      pinSessions[from] = { action: 'save_password', data: incomingMsg };
-      await sendMessage(from, `🔒 *Security Check!*\n\nApna PIN bhejo:`);
+      const structuredPassword = await extractPasswordInfo(incomingMsg);
+      const dataToSave = structuredPassword || incomingMsg;
+      pinSessions[from] = { action: 'save_password', data: dataToSave };
+      await sendMessage(from, `🔒 *Security Check!*\n\nSave karunga:\n*${dataToSave}*\n\nApna PIN bhejo:`);
       return;
     }
 
