@@ -228,7 +228,7 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ── PIN VERIFICATION ──
-    if (pinSessions[from]?.waiting) {
+    if (pinSessions[from] && pinSessions[from].waiting) {
       const pinMatch = incomingMsg.match(/^\d{4,6}$/);
       if (pinMatch && user.pin) {
         const isValid = await bcrypt.compare(incomingMsg, user.pin);
