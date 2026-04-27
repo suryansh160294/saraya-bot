@@ -204,6 +204,184 @@ app.post('/webhook', async (req, res) => {
       return;
     }
 
+    // DATA EXPORT
+    if (lower.includes('export') || lower.includes('mera data') || lower.includes('poora data') || lower.includes('sab data')) {
+      const { data: allMemories } = await supabase
+        .from('memories')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('category', { ascending: true });
+
+      if (!allMemories || allMemories.length === 0) {
+        await sendMessage(from, `📋 Abhi koi data saved nahi hai!\n\nPehle kuch save karo — contacts, notes, ya reminders.`);
+        return;
+      }
+
+      const contacts = allMemories.filter(m => m.category === 'contact');
+      const notes = allMemories.filter(m => m.category === 'note');
+      const tasks = allMemories.filter(m => m.category === 'task');
+      const ideas = allMemories.filter(m => m.category === 'idea');
+      const expenses = allMemories.filter(m => m.category === 'expense');
+      const passwords = allMemories.filter(m => m.category === 'password');
+      const general = allMemories.filter(m => !['contact','note','task','idea','expense','password'].includes(m.category));
+
+      const { data: reminders } = await supabase
+        .from('reminders')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('is_sent', false);
+
+      let exportMsg = `📋 *TUMHARA POORA DATA*\n`;
+      exportMsg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+      if (contacts.length > 0) {
+        exportMsg += `📞 *CONTACTS (${contacts.length})*\n`;
+        contacts.forEach((m, i) => exportMsg += `${i+1}. ${m.content}\n`);
+        exportMsg += `\n`;
+      }
+
+      if (notes.length > 0) {
+        exportMsg += `📝 *NOTES (${notes.length})*\n`;
+        notes.forEach((m, i) => exportMsg += `${i+1}. ${m.content}\n`);
+        exportMsg += `\n`;
+      }
+
+      if (tasks.length > 0) {
+        exportMsg += `✅ *TASKS (${tasks.length})*\n`;
+        tasks.forEach((m, i) => exportMsg += `${i+1}. ${m.content}\n`);
+        exportMsg += `\n`;
+      }
+
+      if (ideas.length > 0) {
+        exportMsg += `💡 *IDEAS (${ideas.length})*\n`;
+        ideas.forEach((m, i) => exportMsg += `${i+1}. ${m.content}\n`);
+        exportMsg += `\n`;
+      }
+
+      if (expenses.length > 0) {
+        exportMsg += `💰 *EXPENSES (${expenses.length})*\n`;
+        expenses.forEach((m, i) => exportMsg += `${i+1}. ${m.content}\n`);
+        exportMsg += `\n`;
+      }
+
+      if (passwords.length > 0) {
+        exportMsg += `🔒 *PASSWORDS (${passwords.length})*\n`;
+        exportMsg += `_(PIN se protect hain — "mera password kya hai" poochho)_\n\n`;
+      }
+
+      if (general.length > 0) {
+        exportMsg += `📌 *OTHER (${general.length})*\n`;
+        general.forEach((m, i) => exportMsg += `${i+1}. ${m.content}\n`);
+        exportMsg += `\n`;
+      }
+
+      if (reminders && reminders.length > 0) {
+        exportMsg += `⏰ *UPCOMING REMINDERS (${reminders.length})*\n`;
+        reminders.forEach((r, i) => {
+          const dt = new Date(r.remind_at);
+          exportMsg += `${i+1}. ${r.message} — ${dt.toLocaleString('en-IN')}\n`;
+        });
+        exportMsg += `\n`;
+      }
+
+      const now = new Date();
+      exportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
+      exportMsg += `📅 ${now.toLocaleDateString('en-IN', {day:'numeric', month:'long', year:'numeric'})}\n`;
+      exportMsg += `🤖 ${agentName} Memory Assistant`;
+
+      await sendMessage(from, exportMsg);
+      return;
+    }
+
+    // DATA EXPORT
+    if (lower.includes('export') || lower.includes('mera data') || lower.includes('poora data') || lower.includes('sab data')) {
+      const { data: allMemories } = await supabase
+        .from('memories')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('category', { ascending: true });
+
+      if (!allMemories || allMemories.length === 0) {
+        await sendMessage(from, `📋 Abhi koi data saved nahi hai!\n\nPehle kuch save karo — contacts, notes, ya reminders.`);
+        return;
+      }
+
+      const contacts = allMemories.filter(m => m.category === 'contact');
+      const notes = allMemories.filter(m => m.category === 'note');
+      const tasks = allMemories.filter(m => m.category === 'task');
+      const ideas = allMemories.filter(m => m.category === 'idea');
+      const expenses = allMemories.filter(m => m.category === 'expense');
+      const passwords = allMemories.filter(m => m.category === 'password');
+      const general = allMemories.filter(m => !['contact','note','task','idea','expense','password'].includes(m.category));
+
+      const { data: reminders } = await supabase
+        .from('reminders')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('is_sent', false);
+
+      let exportMsg = `📋 *TUMHARA POORA DATA*\n`;
+      exportMsg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+      if (contacts.length > 0) {
+        exportMsg += `📞 *CONTACTS (${contacts.length})*\n`;
+        contacts.forEach((m, i) => exportMsg += `${i+1}. ${m.content}\n`);
+        exportMsg += `\n`;
+      }
+
+      if (notes.length > 0) {
+        exportMsg += `📝 *NOTES (${notes.length})*\n`;
+        notes.forEach((m, i) => exportMsg += `${i+1}. ${m.content}\n`);
+        exportMsg += `\n`;
+      }
+
+      if (tasks.length > 0) {
+        exportMsg += `✅ *TASKS (${tasks.length})*\n`;
+        tasks.forEach((m, i) => exportMsg += `${i+1}. ${m.content}\n`);
+        exportMsg += `\n`;
+      }
+
+      if (ideas.length > 0) {
+        exportMsg += `💡 *IDEAS (${ideas.length})*\n`;
+        ideas.forEach((m, i) => exportMsg += `${i+1}. ${m.content}\n`);
+        exportMsg += `\n`;
+      }
+
+      if (expenses.length > 0) {
+        exportMsg += `💰 *EXPENSES (${expenses.length})*\n`;
+        expenses.forEach((m, i) => exportMsg += `${i+1}. ${m.content}\n`);
+        exportMsg += `\n`;
+      }
+
+      if (passwords.length > 0) {
+        exportMsg += `🔒 *PASSWORDS (${passwords.length})*\n`;
+        exportMsg += `_(PIN se protect hain — "mera password kya hai" poochho)_\n\n`;
+      }
+
+      if (general.length > 0) {
+        exportMsg += `📌 *OTHER (${general.length})*\n`;
+        general.forEach((m, i) => exportMsg += `${i+1}. ${m.content}\n`);
+        exportMsg += `\n`;
+      }
+
+      if (reminders && reminders.length > 0) {
+        exportMsg += `⏰ *UPCOMING REMINDERS (${reminders.length})*\n`;
+        reminders.forEach((r, i) => {
+          const dt = new Date(r.remind_at);
+          exportMsg += `${i+1}. ${r.message} — ${dt.toLocaleString('en-IN')}\n`;
+        });
+        exportMsg += `\n`;
+      }
+
+      const now = new Date();
+      exportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
+      exportMsg += `📅 ${now.toLocaleDateString('en-IN', {day:'numeric', month:'long', year:'numeric'})}\n`;
+      exportMsg += `🤖 ${agentName} Memory Assistant`;
+
+      await sendMessage(from, exportMsg);
+      return;
+    }
+
     // GENERAL — Claude
     const { data: memories } = await supabase.from('memories').select('*').eq('user_id', user.id).eq('is_encrypted', false).neq('category', 'password').order('created_at', { ascending: false }).limit(50);
     const claudeReply = await askClaude(incomingMsg, memories || [], agentName);
