@@ -154,6 +154,8 @@ async function processClaudeResponse(claudeReply, userId) {
       const parts = line.replace('SAVE:', '').split(':');
       const category = parts[0].trim().toLowerCase();
       const content = parts.slice(1).join(':').trim();
+      const isPinRelated = /\bpin\b/i.test(content) && /\d{4,6}/.test(content);
+      if (isPinRelated) continue;
       await supabase.from('memories').insert({ user_id: userId, category, content, is_encrypted: false });
     } else if (line.startsWith('REMINDER:')) {
       const parts = line.replace('REMINDER:', '').split(':');
@@ -339,6 +341,13 @@ app.post('/webhook', async (req, res) => {
       return;
     }
 
+    // ── CONVERSATION ENDERS ───────────────────────────────────────
+    const enders = ['ok', 'okay', 'thanks', 'thank you', 'theek hai', 'theek h', 'accha', 'achha', 'done', 'shukriya', 'shukriyaa', 'bye', 'alvida', '👍', '🙏', 'hmm', 'hm', 'alright'];
+    if (enders.includes(lower) || lower === '👍🏻' || lower === '👍🏼') {
+      await sendMessage(from, `😊 Koi aur kaam ho to batao!`);
+      return;
+    }
+
     // ── GENERAL — CLAUDE ──────────────────────────────────────────
     const { data: memories } = await supabase.from('memories').select('*').eq('user_id', user.id).eq('is_encrypted', false).neq('category', 'password').order('created_at', { ascending: false }).limit(50);
     const claudeReply = await askClaude(incomingMsg, memories || [], agentName);
@@ -382,6 +391,18 @@ cron.schedule('* * * * *', async () => {
     } catch (e) { console.error('Reminder error:', e.message); }
   }
 });
+
+// ── CLEANUP: remove any PIN entries accidentally saved in memories ─
+(async () => {
+  try {
+    const { data: pinEntries } = await supabase.from('memories').select('id, content').ilike('content', '%pin%');
+    const toDelete = (pinEntries || []).filter(e => /\d{4,6}/.test(e.content));
+    if (toDelete.length > 0) {
+      await supabase.from('memories').delete().in('id', toDelete.map(e => e.id));
+      console.log(`🧹 ${toDelete.length} PIN entries memories se hataaye`);
+    }
+  } catch (e) { console.error('PIN cleanup error:', e.message); }
+})();
 
 // ── START ─────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
