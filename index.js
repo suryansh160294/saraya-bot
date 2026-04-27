@@ -14,9 +14,11 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-// PIN sessions: { action: 'save_password'|'view_password'|'export', data: '...' }
 const pinSessions = {};
+const PAYMENT_LINK = process.env.PAYMENT_LINK || 'https://rzp.io/rzp/1LdgmPmV';
+const TRIAL_DAYS = 7;
 
+// ── HELPERS ───────────────────────────────────────────────────────
 async function sendMessage(to, body) {
   await twilioClient.messages.create({
     from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -28,94 +30,81 @@ async function sendMessage(to, body) {
 async function getOrCreateUser(phone) {
   let { data: user } = await supabase.from('users').select('*').eq('phone', phone).single();
   if (!user) {
-    const { data: newUser } = await supabase.from('users').insert({ phone, agent_name: 'Saraya' }).select().single();
+    const { data: newUser } = await supabase.from('users')
+      .insert({ phone, agent_name: 'Saraya', plan: 'trial', trial_start: new Date().toISOString() })
+      .select().single();
     user = newUser;
   }
   return user;
 }
 
-function isPasswordRelated(msg) {
-  const lower = msg.toLowerCase();
-  return lower.includes('password') || lower.includes('pass ') || lower.includes('login') || lower.includes('credential') || lower.includes('secret');
+// Check if user is allowed to use Saraya
+function isUserActive(user) {
+  if (user.plan === 'paid') return { active: true };
+
+  if (user.plan === 'trial' || !user.plan) {
+    const trialStart = new Date(user.trial_start || user.created_at);
+    const now = new Date();
+    const daysPassed = Math.floor((now - trialStart) / (1000 * 60 * 60 * 24));
+    const daysLeft = TRIAL_DAYS - daysPassed;
+
+    if (daysLeft > 0) {
+      return { active: true, trial: true, daysLeft };
+    } else {
+      return { active: false, trial: true, daysLeft: 0 };
+    }
+  }
+
+  return { active: false };
 }
 
-// Full export function — passwords dikhao ya nahi
+function isPasswordRelated(msg) {
+  const lower = msg.toLowerCase();
+  return lower.includes('password') || lower.includes('pass ') ||
+    lower.includes('login') || lower.includes('credential') || lower.includes('secret');
+}
+
 async function generateExport(userId, agentName, showPasswords) {
   const { data: allMemories } = await supabase.from('memories').select('*').eq('user_id', userId).order('category', { ascending: true });
   const { data: reminders } = await supabase.from('reminders').select('*').eq('user_id', userId).eq('is_sent', false);
 
-  const contacts  = (allMemories || []).filter(m => m.category === 'contact');
-  const notes     = (allMemories || []).filter(m => m.category === 'note');
-  const tasks     = (allMemories || []).filter(m => m.category === 'task');
-  const ideas     = (allMemories || []).filter(m => m.category === 'idea');
-  const expenses  = (allMemories || []).filter(m => m.category === 'expense');
-  const passwords = (allMemories || []).filter(m => m.category === 'password');
-  const general   = (allMemories || []).filter(m => !['contact','note','task','idea','expense','password'].includes(m.category));
+  if (!allMemories || allMemories.length === 0) return null;
+
+  const contacts  = allMemories.filter(m => m.category === 'contact');
+  const notes     = allMemories.filter(m => m.category === 'note');
+  const tasks     = allMemories.filter(m => m.category === 'task');
+  const ideas     = allMemories.filter(m => m.category === 'idea');
+  const expenses  = allMemories.filter(m => m.category === 'expense');
+  const passwords = allMemories.filter(m => m.category === 'password');
+  const general   = allMemories.filter(m => !['contact','note','task','idea','expense','password'].includes(m.category));
 
   let msg = `📋 *TUMHARA POORA DATA*\n━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-  if (contacts.length > 0) {
-    msg += `📞 *CONTACTS (${contacts.length})*\n`;
-    contacts.forEach((m, i) => msg += `${i+1}. ${m.content}\n`);
-    msg += `\n`;
-  }
-  if (notes.length > 0) {
-    msg += `📝 *NOTES (${notes.length})*\n`;
-    notes.forEach((m, i) => msg += `${i+1}. ${m.content}\n`);
-    msg += `\n`;
-  }
-  if (tasks.length > 0) {
-    msg += `✅ *TASKS (${tasks.length})*\n`;
-    tasks.forEach((m, i) => msg += `${i+1}. ${m.content}\n`);
-    msg += `\n`;
-  }
-  if (ideas.length > 0) {
-    msg += `💡 *IDEAS (${ideas.length})*\n`;
-    ideas.forEach((m, i) => msg += `${i+1}. ${m.content}\n`);
-    msg += `\n`;
-  }
-  if (expenses.length > 0) {
-    msg += `💰 *EXPENSES (${expenses.length})*\n`;
-    expenses.forEach((m, i) => msg += `${i+1}. ${m.content}\n`);
-    msg += `\n`;
-  }
+  if (contacts.length > 0)  { msg += `📞 *CONTACTS (${contacts.length})*\n`;  contacts.forEach((m,i)  => msg += `${i+1}. ${m.content}\n`);  msg += `\n`; }
+  if (notes.length > 0)     { msg += `📝 *NOTES (${notes.length})*\n`;        notes.forEach((m,i)     => msg += `${i+1}. ${m.content}\n`);     msg += `\n`; }
+  if (tasks.length > 0)     { msg += `✅ *TASKS (${tasks.length})*\n`;        tasks.forEach((m,i)     => msg += `${i+1}. ${m.content}\n`);     msg += `\n`; }
+  if (ideas.length > 0)     { msg += `💡 *IDEAS (${ideas.length})*\n`;        ideas.forEach((m,i)     => msg += `${i+1}. ${m.content}\n`);     msg += `\n`; }
+  if (expenses.length > 0)  { msg += `💰 *EXPENSES (${expenses.length})*\n`;  expenses.forEach((m,i)  => msg += `${i+1}. ${m.content}\n`);  msg += `\n`; }
   if (passwords.length > 0) {
     msg += `🔒 *PASSWORDS (${passwords.length})*\n`;
-    if (showPasswords) {
-      passwords.forEach((m, i) => msg += `${i+1}. 🔑 ${m.content}\n`);
-    } else {
-      msg += `_(Passwords chhupe hain — export mein PIN verify karo)_\n`;
-    }
+    if (showPasswords) { passwords.forEach((m,i) => msg += `${i+1}. 🔑 ${m.content}\n`); }
+    else { msg += `_(PIN verify karo passwords dekhne ke liye)_\n`; }
     msg += `\n`;
   }
-  if (general.length > 0) {
-    msg += `📌 *OTHER (${general.length})*\n`;
-    general.forEach((m, i) => msg += `${i+1}. ${m.content}\n`);
-    msg += `\n`;
-  }
+  if (general.length > 0)   { msg += `📌 *OTHER (${general.length})*\n`;      general.forEach((m,i)   => msg += `${i+1}. ${m.content}\n`);   msg += `\n`; }
   if (reminders && reminders.length > 0) {
     msg += `⏰ *UPCOMING REMINDERS (${reminders.length})*\n`;
-    reminders.forEach((r, i) => {
-      const dt = new Date(r.remind_at);
-      msg += `${i+1}. ${r.message} — ${dt.toLocaleString('en-IN')}\n`;
-    });
+    reminders.forEach((r,i) => { const dt = new Date(r.remind_at); msg += `${i+1}. ${r.message} — ${dt.toLocaleString('en-IN')}\n`; });
     msg += `\n`;
-  }
-
-  if (!allMemories || allMemories.length === 0) {
-    return null;
   }
 
   const now = new Date();
-  msg += `━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `📅 ${now.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}\n`;
-  msg += `🤖 ${agentName} Memory Assistant`;
+  msg += `━━━━━━━━━━━━━━━━━━━━\n📅 ${now.toLocaleDateString('en-IN', {day:'numeric',month:'long',year:'numeric'})}\n🤖 ${agentName} Memory Assistant`;
   return msg;
 }
 
 async function askClaude(userMessage, memories, agentName) {
   const memoryText = memories.length > 0
-    ? memories.map((m, i) => `${i + 1}. [${m.category}] ${m.content}`).join('\n')
+    ? memories.map((m,i) => `${i+1}. [${m.category}] ${m.content}`).join('\n')
     : 'Abhi koi memory saved nahi hai.';
 
   const response = await anthropic.messages.create({
@@ -127,9 +116,9 @@ User ki saved memories:
 ${memoryText}
 
 Rules:
-- Save karna ho → SAVE:[category]:[content] format use kar
-- Reminder → REMINDER:[datetime]:[message] format use kar
-- Kuch poochha ho → memory se dhundh ke answer de
+- Save karna ho → SAVE:[category]:[content]
+- Reminder → REMINDER:[datetime]:[message]
+- Kuch poochha → memory se dhundh ke answer do
 - Short aur friendly reh
 
 Example:
@@ -154,9 +143,7 @@ async function processClaudeResponse(claudeReply, userId) {
       const dateStr = parts[0].trim();
       const message = parts.slice(1).join(':').trim();
       let remindAt = new Date();
-      if (dateStr.toLowerCase().includes('tomorrow') || dateStr.toLowerCase().includes('kal')) {
-        remindAt.setDate(remindAt.getDate() + 1);
-      }
+      if (dateStr.toLowerCase().includes('tomorrow') || dateStr.toLowerCase().includes('kal')) remindAt.setDate(remindAt.getDate() + 1);
       const timePart = dateStr.match(/(\d+):(\d+)\s*(AM|PM|am|pm)?/);
       if (timePart) {
         let hours = parseInt(timePart[1]);
@@ -172,6 +159,7 @@ async function processClaudeResponse(claudeReply, userId) {
   return finalLines.join('\n').trim() || '✅ Done!';
 }
 
+// ── MAIN WEBHOOK ──────────────────────────────────────────────────
 app.post('/webhook', async (req, res) => {
   res.status(200).send('');
   const incomingMsg = (req.body.Body || '').trim();
@@ -183,17 +171,51 @@ app.post('/webhook', async (req, res) => {
     const agentName = user.agent_name || 'Saraya';
     const lower = incomingMsg.toLowerCase();
 
-    // ── WELCOME ──────────────────────────────────────────────────
+    // ── CHECK ACCESS ──────────────────────────────────────────────
+    const access = isUserActive(user);
+
+    if (!access.active) {
+      await sendMessage(from,
+        `⏰ *Tumhara free trial khatam ho gaya!*\n\n` +
+        `Saraya use karte rehne ke liye:\n\n` +
+        `💳 *₹99/month* mein subscribe karo:\n${PAYMENT_LINK}\n\n` +
+        `Payment ke baad "paid" type karo — main activate kar dunga! 🚀`
+      );
+      return;
+    }
+
+    // Trial warning — 1 din pehle
+    if (access.trial && access.daysLeft === 1) {
+      await sendMessage(from,
+        `⚠️ *Kal tumhara free trial khatam ho raha hai!*\n\n` +
+        `Continue karne ke liye abhi subscribe karo:\n${PAYMENT_LINK}\n\n` +
+        `Sirf ₹99/month! 🎯`
+      );
+    }
+
+    // ── MANUAL ACTIVATION (temporary) ────────────────────────────
+    if (lower === 'paid' || lower === 'activate') {
+      await supabase.from('users').update({ plan: 'paid' }).eq('id', user.id);
+      await sendMessage(from,
+        `✅ *Tumhara account activate ho gaya!*\n\n` +
+        `Welcome to Saraya Premium! 🎉\n\n` +
+        `Ab unlimited memories, passwords aur reminders use karo!`
+      );
+      return;
+    }
+
+    // ── WELCOME ───────────────────────────────────────────────────
     if (lower === 'hi' || lower === 'hello' || lower === 'start' || lower === 'hii') {
+      const trialMsg = access.trial ? `\n\n⏳ *Free trial: ${access.daysLeft} din baaki*` : '';
       await sendMessage(from,
         `🌟 *Welcome!* Main hun ${agentName} — tumhara personal AI memory assistant!\n\n` +
-        `📞 Contacts\n📝 Notes\n🔒 Passwords\n⏰ Reminders\n\n` +
+        `📞 Contacts\n📝 Notes\n🔒 Passwords\n⏰ Reminders${trialMsg}\n\n` +
         `Pehle mujhe naam do!\nType karo: *"Mujhe [naam] bulao"*`
       );
       return;
     }
 
-    // ── SET NAME ─────────────────────────────────────────────────
+    // ── SET NAME ──────────────────────────────────────────────────
     if (lower.startsWith('mujhe') && lower.includes('bulao')) {
       const nameMatch = incomingMsg.match(/mujhe\s+(\w+)\s+bulao/i);
       if (nameMatch) {
@@ -203,7 +225,7 @@ app.post('/webhook', async (req, res) => {
       }
     }
 
-    // ── SET PIN ──────────────────────────────────────────────────
+    // ── SET PIN ───────────────────────────────────────────────────
     if (lower.includes('pin set') || lower.includes('set pin')) {
       const pinMatch = incomingMsg.match(/\d{4,6}/);
       if (pinMatch) {
@@ -216,66 +238,44 @@ app.post('/webhook', async (req, res) => {
       return;
     }
 
-    // ── PIN VERIFICATION ─────────────────────────────────────────
+    // ── PIN VERIFICATION ──────────────────────────────────────────
     if (pinSessions[from]) {
       const session = pinSessions[from];
       const pinMatch = incomingMsg.match(/^\d{4,6}$/);
+      if (!pinMatch) { await sendMessage(from, `❌ Sirf numbers bhejo (4-6 digits):`); return; }
+      if (!user.pin) { delete pinSessions[from]; await sendMessage(from, `PIN set nahi hai!\nType karo: "PIN set karo 1234"`); return; }
 
-      if (!pinMatch) {
-        await sendMessage(from, `❌ Sirf numbers bhejo (4-6 digits):`);
-        return;
-      }
-      if (!user.pin) {
-        delete pinSessions[from];
-        await sendMessage(from, `PIN set nahi hai!\nType karo: "PIN set karo 1234"`);
-        return;
-      }
       const isValid = await bcrypt.compare(incomingMsg, user.pin);
-      if (!isValid) {
-        await sendMessage(from, `❌ *Galat PIN!* Dobara try karo:`);
-        return;
-      }
+      if (!isValid) { await sendMessage(from, `❌ *Galat PIN!* Dobara try karo:`); return; }
 
-      // ── SAVE PASSWORD ───────────────────────────────────────────
       if (session.action === 'save_password') {
         await supabase.from('memories').insert({ user_id: user.id, category: 'password', content: session.data, is_encrypted: false });
         delete pinSessions[from];
         await sendMessage(from, `✅ *PIN correct!*\n\n🔒 Password save ho gaya:\n*${session.data}*`);
         return;
       }
-
-      // ── VIEW PASSWORD ───────────────────────────────────────────
       if (session.action === 'view_password') {
         const { data: passwords } = await supabase.from('memories').select('*').eq('user_id', user.id).eq('category', 'password');
         delete pinSessions[from];
         if (!passwords || passwords.length === 0) {
           await sendMessage(from, `✅ *PIN correct!*\n\nKoi password saved nahi hai abhi.`);
         } else {
-          const list = passwords.map((p, i) => `${i+1}. 🔑 ${p.content}`).join('\n');
+          const list = passwords.map((p,i) => `${i+1}. 🔑 ${p.content}`).join('\n');
           await sendMessage(from, `✅ *PIN correct!*\n\n*Tumhare passwords:*\n\n${list}`);
         }
         return;
       }
-
-      // ── EXPORT WITH PASSWORDS ───────────────────────────────────
       if (session.action === 'export') {
         delete pinSessions[from];
         const exportMsg = await generateExport(user.id, agentName, true);
-        if (!exportMsg) {
-          await sendMessage(from, `📋 Abhi koi data saved nahi hai!`);
-        } else {
-          await sendMessage(from, `✅ *PIN correct!*\n\nPoora data — passwords ke saath:\n\n` + exportMsg);
-        }
+        await sendMessage(from, exportMsg ? `✅ *PIN correct!*\n\n` + exportMsg : `Koi data nahi hai abhi.`);
         return;
       }
     }
 
     // ── PASSWORD SAVE ─────────────────────────────────────────────
     if (isPasswordRelated(incomingMsg) && (lower.includes('save') || lower.includes('add') || lower.includes('store'))) {
-      if (!user.pin) {
-        await sendMessage(from, `🔒 Pehle PIN set karo:\n*"PIN set karo 1234"*`);
-        return;
-      }
+      if (!user.pin) { await sendMessage(from, `🔒 Pehle PIN set karo:\n*"PIN set karo 1234"*`); return; }
       pinSessions[from] = { action: 'save_password', data: incomingMsg };
       await sendMessage(from, `🔒 *Security Check!*\n\nApna PIN bhejo:`);
       return;
@@ -283,10 +283,7 @@ app.post('/webhook', async (req, res) => {
 
     // ── PASSWORD VIEW ─────────────────────────────────────────────
     if (isPasswordRelated(incomingMsg)) {
-      if (!user.pin) {
-        await sendMessage(from, `🔒 Pehle PIN set karo:\n*"PIN set karo 1234"*`);
-        return;
-      }
+      if (!user.pin) { await sendMessage(from, `🔒 Pehle PIN set karo:\n*"PIN set karo 1234"*`); return; }
       pinSessions[from] = { action: 'view_password', data: incomingMsg };
       await sendMessage(from, `🔒 *Security Check!*\n\nApna PIN bhejo:`);
       return;
@@ -295,34 +292,20 @@ app.post('/webhook', async (req, res) => {
     // ── DATA EXPORT ───────────────────────────────────────────────
     if (lower.includes('export') || lower.includes('mera data') || lower.includes('poora data') || lower.includes('sab data')) {
       if (user.pin) {
-        // Has PIN — ask for verification to show passwords too
         pinSessions[from] = { action: 'export', data: 'export' };
-        await sendMessage(from,
-          `📋 *Data Export*\n\nPasswords bhi dekhne ke liye *PIN bhejo*.\n\n` +
-          `_(Passwords chhod ke export karna ho to "skip" bhejo)_`
-        );
-        return;
+        await sendMessage(from, `📋 *Data Export*\n\nPasswords bhi dekhne ke liye *PIN bhejo*\n_(Skip karna ho to "skip" bhejo)_`);
       } else {
-        // No PIN — export without passwords
         const exportMsg = await generateExport(user.id, agentName, false);
-        if (!exportMsg) {
-          await sendMessage(from, `📋 Abhi koi data saved nahi hai!\n\nPehle kuch save karo.`);
-        } else {
-          await sendMessage(from, exportMsg);
-        }
-        return;
+        await sendMessage(from, exportMsg || `Koi data saved nahi hai abhi!`);
       }
+      return;
     }
 
-    // ── SKIP EXPORT PIN ───────────────────────────────────────────
+    // ── SKIP EXPORT ───────────────────────────────────────────────
     if (lower === 'skip' && pinSessions[from]?.action === 'export') {
       delete pinSessions[from];
       const exportMsg = await generateExport(user.id, agentName, false);
-      if (!exportMsg) {
-        await sendMessage(from, `📋 Abhi koi data saved nahi hai!`);
-      } else {
-        await sendMessage(from, exportMsg);
-      }
+      await sendMessage(from, exportMsg || `Koi data saved nahi hai!`);
       return;
     }
 
@@ -338,7 +321,26 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// ── REMINDERS CRON ────────────────────────────────────────────────
+// ── TRIAL EXPIRY CHECK (daily at 9am) ────────────────────────────
+cron.schedule('0 9 * * *', async () => {
+  const now = new Date();
+  const { data: trialUsers } = await supabase.from('users').select('*').eq('plan', 'trial');
+  for (const user of (trialUsers || [])) {
+    const trialStart = new Date(user.trial_start || user.created_at);
+    const daysPassed = Math.floor((now - trialStart) / (1000 * 60 * 60 * 24));
+    if (daysPassed === 6) {
+      try {
+        await twilioClient.messages.create({
+          from: process.env.TWILIO_WHATSAPP_NUMBER,
+          to: `whatsapp:${user.phone}`,
+          body: `⚠️ *Kal tumhara free trial khatam ho raha hai!*\n\nSaraya use karte rehne ke liye:\n💳 *₹99/month*:\n${PAYMENT_LINK}`
+        });
+      } catch (e) {}
+    }
+  }
+});
+
+// ── REMINDERS CRON (every minute) ────────────────────────────────
 cron.schedule('* * * * *', async () => {
   const now = new Date();
   const { data: dueReminders } = await supabase.from('reminders').select('*, users(phone, agent_name)').eq('is_sent', false).lte('remind_at', now.toISOString());
@@ -351,7 +353,7 @@ cron.schedule('* * * * *', async () => {
   }
 });
 
-// ── START ──────────────────────────────────────────────────────────
+// ── START ─────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`✅ Saraya bot chal raha hai — Port ${PORT}`);
