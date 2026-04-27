@@ -208,9 +208,9 @@ app.post('/webhook', async (req, res) => {
     if (lower === 'hi' || lower === 'hello' || lower === 'start' || lower === 'hii') {
       const trialMsg = access.trial ? `\n\n⏳ *Free trial: ${access.daysLeft} din baaki*` : '';
       await sendMessage(from,
-        `🌟 *Welcome!* Main hun ${agentName} — tumhara personal AI memory assistant!\n\n` +
+        `🌟 *Welcome!* Main tumhara personal AI memory assistant hun!\n\n` +
         `📞 Contacts\n📝 Notes\n🔒 Passwords\n⏰ Reminders${trialMsg}\n\n` +
-        `Pehle mujhe naam do!\nType karo: *"Mujhe [naam] bulao"*`
+        `Pehle mujhe ek naam do — jo tum chahte ho! 😊\nType karo: *"Mujhe [naam] bulao"*\n\nExample: "Mujhe Max bulao"`
       );
       return;
     }
