@@ -267,8 +267,9 @@ app.post('/webhook', async (req, res) => {
         const service = separatorMatch[1].trim();
         const password = separatorMatch[2].trim();
         const structured = `${service}: ${password}`;
-        pinSessions[from] = { action: 'save_password', data: structured };
-        await sendMessage(from, `🔒 *Security Check!*\n\nSave karunga:\n*${structured}*\n\nApna PIN bhejo:`);
+        await supabase.from('memories').insert({ user_id: user.id, category: 'password', content: structured, is_encrypted: false });
+        delete pinSessions[from];
+        await sendMessage(from, `🔒 *${structured}* save ho gaya!`);
         return;
       }
 
@@ -280,12 +281,6 @@ app.post('/webhook', async (req, res) => {
       const isValid = await bcrypt.compare(incomingMsg, user.pin);
       if (!isValid) { await sendMessage(from, `❌ *Galat PIN!* Dobara try karo:`); return; }
 
-      if (session.action === 'save_password') {
-        await supabase.from('memories').insert({ user_id: user.id, category: 'password', content: session.data, is_encrypted: false });
-        delete pinSessions[from];
-        await sendMessage(from, `✅ *PIN correct!*\n\n🔒 Password save ho gaya:\n*${session.data}*`);
-        return;
-      }
       if (session.action === 'view_password') {
         const { data: passwords } = await supabase.from('memories').select('*').eq('user_id', user.id).eq('category', 'password');
         delete pinSessions[from];
@@ -307,7 +302,6 @@ app.post('/webhook', async (req, res) => {
 
     // ── PASSWORD SAVE ─────────────────────────────────────────────
     if (isPasswordRelated(incomingMsg) && (lower.includes('save') || lower.includes('add') || lower.includes('store'))) {
-      if (!user.pin) { await sendMessage(from, `🔒 Pehle PIN set karo:\n*"PIN set karo 1234"*`); return; }
       pinSessions[from] = { action: 'awaiting_password_info' };
       await sendMessage(from, `🔒 *Password Save*\n\nKaun si service ka password save karna hai?\n\nIs format mein bhejo:\n*Service - Password*\n\nExample: Instagram - MyPass@123`);
       return;
