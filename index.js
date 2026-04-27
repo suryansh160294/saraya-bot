@@ -58,6 +58,22 @@ function isUserActive(user) {
   return { active: false };
 }
 
+function detectNameSet(msg) {
+  const patterns = [
+    /mujhe\s+(\w+)\s+bulao/i,
+    /tujhe\s+(\w+)\s+bulao/i,
+    /tumhara\s+(?:naam|name)\s+(\w+)\s+hai/i,
+    /tera\s+(?:naam|name)\s+(\w+)\s+hai/i,
+    /(\w+)\s+(?:naam|name)\s+rakho/i,
+    /apna\s+(?:naam|name)\s+(\w+)\s+(?:rakho|rakh|karo|kar)/i,
+  ];
+  for (const pattern of patterns) {
+    const m = msg.match(pattern);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 function isPasswordRelated(msg) {
   const lower = msg.toLowerCase();
   return lower.includes('password') || lower.includes('pass ') ||
@@ -216,13 +232,11 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ── SET NAME ──────────────────────────────────────────────────
-    if (lower.startsWith('mujhe') && lower.includes('bulao')) {
-      const nameMatch = incomingMsg.match(/mujhe\s+(\w+)\s+bulao/i);
-      if (nameMatch) {
-        await supabase.from('users').update({ agent_name: nameMatch[1] }).eq('id', user.id);
-        await sendMessage(from, `✨ Ab main hun *${nameMatch[1]}*! Kya yaad rakhun? 😊`);
-        return;
-      }
+    const detectedName = detectNameSet(incomingMsg);
+    if (detectedName) {
+      await supabase.from('users').update({ agent_name: detectedName }).eq('id', user.id);
+      await sendMessage(from, `✨ Ab main hun *${detectedName}*! Kya yaad rakhun? 😊`);
+      return;
     }
 
     // ── SET PIN ───────────────────────────────────────────────────
