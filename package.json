@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-"start": "node index.js & node telegram.js"
+    "start": "node index.js & node telegram.js"
   },
   "keywords": [],
   "author": "",
@@ -17,6 +17,7 @@
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "groq-sdk": "^1.1.2",
     "node-cron": "^4.2.1",
     "node-telegram-bot-api": "^0.67.0",
     "twilio": "^6.0.0"

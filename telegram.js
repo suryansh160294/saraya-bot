@@ -1,14 +1,20 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const Anthropic = require('@anthropic-ai/sdk');
+const Groq = require('groq-sdk');
 const { createClient } = require('@supabase/supabase-js');
 const bcrypt = require('bcryptjs');
 const cron = require('node-cron');
+const https = require('https');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 // ── CLIENTS ──────────────────────────────────────────────────────
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const PAYMENT_LINK = process.env.PAYMENT_LINK || 'https://rzp.io/rzp/1LdgmPmV';
 const TRIAL_DAYS = 7;
@@ -80,6 +86,37 @@ function detectNameSet(msg) {
     if (m) return m[1];
   }
   return null;
+}
+
+// ── VOICE TRANSCRIPTION ───────────────────────────────────────────
+function downloadFile(url, dest) {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(dest);
+    https.get(url, (res) => {
+      res.pipe(file);
+      file.on('finish', () => file.close(resolve));
+    }).on('error', (err) => {
+      fs.unlink(dest, () => {});
+      reject(err);
+    });
+  });
+}
+
+async function transcribeVoice(fileId) {
+  const telegramFile = await bot.getFile(fileId);
+  const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_TOKEN}/${telegramFile.file_path}`;
+  const tmpPath = path.join(os.tmpdir(), `saraya_voice_${fileId}.ogg`);
+  await downloadFile(fileUrl, tmpPath);
+  try {
+    const result = await groq.audio.transcriptions.create({
+      file: fs.createReadStream(tmpPath),
+      model: 'whisper-large-v3',
+      language: 'hi',
+    });
+    return result.text || '';
+  } finally {
+    fs.unlink(tmpPath, () => {});
+  }
 }
 
 // ── GENERATE EXPORT ───────────────────────────────────────────────
@@ -226,8 +263,22 @@ async function processClaudeResponse(claudeReply, userId) {
 // ── MAIN MESSAGE HANDLER ──────────────────────────────────────────
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
-  const incomingMsg = (msg.text || '').trim();
   const firstName = msg.from.first_name || 'Friend';
+  let incomingMsg = (msg.text || '').trim();
+
+  if (msg.voice) {
+    try {
+      const transcribed = await transcribeVoice(msg.voice.file_id);
+      incomingMsg = transcribed.trim();
+      if (incomingMsg) {
+        await sendMessage(chatId, `🎤 *Voice note suna:* _${incomingMsg}_`);
+      }
+    } catch (e) {
+      console.error('Voice transcription error:', e.message);
+      await sendMessage(chatId, '😅 Voice note samajh nahi aaya. Dobara bhejo ya text mein likho!');
+      return;
+    }
+  }
 
   if (!incomingMsg) return;
 
