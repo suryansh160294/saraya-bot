@@ -111,11 +111,11 @@ async function generateExport(userId, agentName, showPasswords) {
   if (general.length > 0)   { msg += `📌 *OTHER (${general.length})*\n`;      general.forEach((m,i)   => msg += `${i+1}. ${m.content}\n`);  msg += `\n`; }
   if (reminders && reminders.length > 0) {
     msg += `⏰ *UPCOMING REMINDERS (${reminders.length})*\n`;
-    reminders.forEach((r,i) => { const dt = new Date(r.remind_at); msg += `${i+1}. ${r.message} — ${dt.toLocaleString('en-IN')}\n`; });
+    reminders.forEach((r,i) => { const dt = new Date(r.remind_at); msg += `${i+1}. ${r.message} — ${dt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n`; });
     msg += `\n`;
   }
   const now = new Date();
-  msg += `━━━━━━━━━━━━━━━━━━━━\n📅 ${now.toLocaleDateString('en-IN', {day:'numeric',month:'long',year:'numeric'})}\n🤖 ${agentName} Memory Assistant`;
+  msg += `━━━━━━━━━━━━━━━━━━━━\n📅 ${now.toLocaleDateString('en-IN', {day:'numeric',month:'long',year:'numeric',timeZone:'Asia/Kolkata'})}\n🤖 ${agentName} Memory Assistant`;
   return msg;
 }
 
@@ -125,17 +125,22 @@ async function askClaude(userMessage, memories, agentName) {
     ? memories.map((m,i) => `${i+1}. [${m.category}] ${m.content}`).join('\n')
     : 'Abhi koi memory saved nahi hai.';
 
+  const istNow = new Date(Date.now() + 330 * 60 * 1000);
+  const istTimeStr = `${String(istNow.getUTCHours()).padStart(2,'0')}:${String(istNow.getUTCMinutes()).padStart(2,'0')} IST, ${istNow.getUTCDate()}/${istNow.getUTCMonth()+1}/${istNow.getUTCFullYear()}`;
+
   const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-5',
     max_tokens: 800,
     system: `Tu ${agentName} hai — ek personal AI memory assistant. Hinglish mein baat kar (Hindi + English mix).
+
+Abhi ka time: ${istTimeStr}
 
 User ki saved memories:
 ${memoryText}
 
 Rules:
 - Save karna ho → SAVE:[category]:[content]
-- Reminder → REMINDER:[datetime]:[message]
+- Reminder → REMINDER:[datetime]:[message]  (datetime mein IST time likhna, e.g. "tomorrow 08:00 PM" ya "today 14:30")
 - Kuch poochha → memory se dhundh ke answer do
 - Short aur friendly reh
 - Password related cheezein → alag se handle hoti hain
@@ -165,13 +170,17 @@ async function processClaudeResponse(claudeReply, userId) {
       const dateStr = parts[0].trim();
       const message = parts.slice(1).join(':').trim();
       let remindAt = new Date();
-      if (dateStr.toLowerCase().includes('tomorrow') || dateStr.toLowerCase().includes('kal')) remindAt.setDate(remindAt.getDate() + 1);
+      if (dateStr.toLowerCase().includes('tomorrow') || dateStr.toLowerCase().includes('kal')) remindAt.setUTCDate(remindAt.getUTCDate() + 1);
       const timePart = dateStr.match(/(\d+):(\d+)\s*(AM|PM|am|pm)?/);
       if (timePart) {
         let hours = parseInt(timePart[1]);
         const minutes = parseInt(timePart[2]);
         if (timePart[3] && timePart[3].toLowerCase() === 'pm' && hours !== 12) hours += 12;
-        remindAt.setHours(hours, minutes, 0, 0);
+        if (timePart[3] && timePart[3].toLowerCase() === 'am' && hours === 12) hours = 0;
+        // User ka time IST hai (UTC+5:30) — UTC mein convert karo
+        let utcMins = hours * 60 + minutes - 330;
+        if (utcMins < 0) { utcMins += 1440; remindAt.setUTCDate(remindAt.getUTCDate() - 1); }
+        remindAt.setUTCHours(Math.floor(utcMins / 60), utcMins % 60, 0, 0);
       }
       await supabase.from('reminders').insert({ user_id: userId, message, remind_at: remindAt.toISOString(), is_sent: false });
     } else {
