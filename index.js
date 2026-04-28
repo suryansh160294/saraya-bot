@@ -139,7 +139,10 @@ ${memoryText}
 
 Rules:
 - Save karna ho → SAVE:[category]:[content]
-- Reminder → REMINDER:[datetime]:[message]  (datetime mein IST time likhna, e.g. "tomorrow 08:00 PM" ya "today 14:30")
+- Reminder → REMINDER:DATETIME|message  (pipe | se message alag karo, DATETIME mein 24-hour IST time)
+  Example: REMINDER:today 18:00|Chai peena
+  Example: REMINDER:tomorrow 08:30|Meeting hai
+  "shaam 6 baje" = 18:00, "subah 7 baje" = 07:00, "dopahar 1 baje" = 13:00
 - Kuch poochha → memory se dhundh ke answer do
 - Short aur friendly reh
 
@@ -163,22 +166,52 @@ async function processClaudeResponse(claudeReply, userId) {
       if (isPinRelated) continue;
       await supabase.from('memories').insert({ user_id: userId, category, content, is_encrypted: false });
     } else if (line.startsWith('REMINDER:')) {
-      const parts = line.replace('REMINDER:', '').split(':');
-      const dateStr = parts[0].trim();
-      const message = parts.slice(1).join(':').trim();
+      const raw = line.replace('REMINDER:', '');
+      let dateStr, message;
+      const pipeIdx = raw.indexOf('|');
+      if (pipeIdx >= 0) {
+        dateStr = raw.slice(0, pipeIdx).trim();
+        message  = raw.slice(pipeIdx + 1).trim();
+      } else {
+        // Fallback: old colon format "today 18:00:message" — grab up to HH:MM, rest is message
+        const oldFmt = raw.match(/^(.*?\d{1,2}:\d{2}(?:\s*(?:AM|PM))?)\s*:(.+)$/i);
+        if (oldFmt) { dateStr = oldFmt[1].trim(); message = oldFmt[2].trim(); }
+        else { const ci = raw.indexOf(':'); dateStr = ci >= 0 ? raw.slice(0, ci).trim() : raw; message = ci >= 0 ? raw.slice(ci + 1).trim() : 'Reminder'; }
+      }
+
+      const lower = dateStr.toLowerCase();
+      const forcePM = lower.includes('shaam') || lower.includes('dopahar') || lower.includes('raat');
+      const forceAM = lower.includes('subah') || lower.includes('savere');
+
       let remindAt = new Date();
-      if (dateStr.toLowerCase().includes('tomorrow') || dateStr.toLowerCase().includes('kal')) remindAt.setUTCDate(remindAt.getUTCDate() + 1);
-      const timePart = dateStr.match(/(\d+):(\d+)\s*(AM|PM|am|pm)?/);
-      if (timePart) {
-        let hours = parseInt(timePart[1]);
-        const minutes = parseInt(timePart[2]);
-        if (timePart[3] && timePart[3].toLowerCase() === 'pm' && hours !== 12) hours += 12;
-        if (timePart[3] && timePart[3].toLowerCase() === 'am' && hours === 12) hours = 0;
-        // User ka time IST hai (UTC+5:30) — UTC mein convert karo
+      if (lower.includes('tomorrow') || lower.includes('kal')) remindAt.setUTCDate(remindAt.getUTCDate() + 1);
+
+      let hours = -1, minutes = 0;
+      const colonTime = dateStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?/);
+      if (colonTime) {
+        hours = parseInt(colonTime[1]);
+        minutes = parseInt(colonTime[2]);
+        if (colonTime[3]) {
+          if (colonTime[3].toLowerCase() === 'pm' && hours !== 12) hours += 12;
+          if (colonTime[3].toLowerCase() === 'am' && hours === 12) hours = 0;
+        } else if (forcePM && hours < 12) hours += 12;
+        else if (forceAM && hours === 12) hours = 0;
+      } else {
+        const bajeMatch = dateStr.match(/(\d{1,2})\s*baje/i);
+        if (bajeMatch) {
+          hours = parseInt(bajeMatch[1]);
+          if (forcePM && hours < 12) hours += 12;
+          else if (forceAM && hours === 12) hours = 0;
+        }
+      }
+
+      if (hours >= 0) {
         let utcMins = hours * 60 + minutes - 330;
-        if (utcMins < 0) { utcMins += 1440; remindAt.setUTCDate(remindAt.getUTCDate() - 1); }
+        if (utcMins < 0)     { utcMins += 1440; remindAt.setUTCDate(remindAt.getUTCDate() - 1); }
+        if (utcMins >= 1440) { utcMins -= 1440; remindAt.setUTCDate(remindAt.getUTCDate() + 1); }
         remindAt.setUTCHours(Math.floor(utcMins / 60), utcMins % 60, 0, 0);
       }
+
       await supabase.from('reminders').insert({ user_id: userId, message, remind_at: remindAt.toISOString(), is_sent: false });
     } else {
       finalLines.push(line);
